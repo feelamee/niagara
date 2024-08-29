@@ -80,6 +80,7 @@ struct MeshDraw
 struct MeshDrawCommand
 {
 	uint drawId;
+	uint provokeOffset;
 
 	// VkDrawIndexedIndirectCommand
 	uint indexCount;

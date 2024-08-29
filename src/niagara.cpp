@@ -116,6 +116,7 @@ struct alignas(16) MeshDraw
 struct MeshDrawCommand
 {
 	uint32_t drawId;
+	uint32_t provokeOffset;
 	VkDrawIndexedIndirectCommand indirect; // 5 uint32_t
 };
 
@@ -162,6 +163,7 @@ struct Geometry
 	std::vector<uint32_t> indices;
 	std::vector<Meshlet> meshlets;
 	std::vector<uint32_t> meshletdata;
+	std::vector<uint32_t> provokedata;
 	std::vector<Mesh> meshes;
 };
 
@@ -285,6 +287,62 @@ bool loadObj(std::vector<Vertex>& vertices, const char* path)
 	return true;
 }
 
+unsigned int provoke(std::vector<uint32_t>& pidx, std::vector<uint32_t>& prov, const std::vector<Vertex>& vertices, const std::vector<uint32_t>& indices)
+{
+	const size_t max_vertices = MESH_MAXVTX;
+	const size_t max_triangles = MESH_MAXTRI;
+
+	std::vector<meshopt_Meshlet> meshlets(meshopt_buildMeshletsBound(indices.size(), max_vertices, max_triangles));
+	std::vector<unsigned int> meshlet_vertices(meshlets.size() * max_vertices);
+	std::vector<unsigned char> meshlet_triangles(meshlets.size() * max_triangles * 3);
+
+	meshlets.resize(meshopt_buildMeshlets(meshlets.data(), meshlet_vertices.data(), meshlet_triangles.data(), indices.data(), indices.size(), &vertices[0].vx, vertices.size(), sizeof(Vertex), max_vertices, max_triangles, 0));
+
+	printf("provoke: %d meshlets\n", int(meshlets.size()));
+
+	unsigned int degen = 0;
+
+	for (auto& meshlet : meshlets)
+	{
+		uint32_t provoff = uint32_t(prov.size());
+
+		for (unsigned int i = 0; i < meshlet.vertex_count; ++i)
+			prov.push_back(meshlet_vertices[meshlet.vertex_offset + i]);
+
+		// must pad to 64
+		for (unsigned int i = meshlet.vertex_count; i < MESH_MAXVTX; ++i)
+			prov.push_back(meshlet_vertices[meshlet.vertex_offset]);
+
+		for (unsigned int i = 0; i < meshlet.triangle_count; ++i)
+		{
+			pidx.push_back(provoff + meshlet_triangles[meshlet.triangle_offset + i * 3 + 0]);
+			pidx.push_back(provoff + meshlet_triangles[meshlet.triangle_offset + i * 3 + 1]);
+			pidx.push_back(provoff + meshlet_triangles[meshlet.triangle_offset + i * 3 + 2]);
+		}
+
+		// must pad to 64
+		for (unsigned int i = meshlet.triangle_count; i < MESH_MAXTRI; ++i)
+		{
+			pidx.push_back(provoff + meshlet_triangles[meshlet.triangle_offset]);
+			pidx.push_back(provoff + meshlet_triangles[meshlet.triangle_offset]);
+			pidx.push_back(provoff + meshlet_triangles[meshlet.triangle_offset]);
+
+			degen++;
+		}
+	}
+
+	return degen;
+}
+
+unsigned int provokeopt(std::vector<uint32_t>& pidx, std::vector<uint32_t>& prov, const std::vector<uint32_t>& indices, size_t vertex_count)
+{
+	pidx.resize(indices.size());
+	prov.resize(vertex_count + indices.size() / 3);
+	size_t uniq = meshopt_generateProvokingIndexBuffer(pidx.data(), prov.data(), indices.data(), indices.size(), vertex_count);
+	prov.resize(uniq);
+	return 0;
+}
+
 bool loadMesh(Geometry& result, const char* path, bool buildMeshlets)
 {
 	std::vector<Vertex> triangle_vertices;
@@ -336,10 +394,54 @@ bool loadMesh(Geometry& result, const char* path, bool buildMeshlets)
 		lod.indexOffset = uint32_t(result.indices.size());
 		lod.indexCount = uint32_t(lodIndices.size());
 
-		result.indices.insert(result.indices.end(), lodIndices.begin(), lodIndices.end());
+		if (1)
+		{
+			std::vector<uint32_t> pidx, prov;
+			// unsigned int degen = provoke(pidx, prov, vertices, lodIndices);
+			unsigned int degen = provokeopt(pidx, prov, lodIndices, vertices.size());
 
-		lod.meshletOffset = uint32_t(result.meshlets.size());
-		lod.meshletCount = buildMeshlets ? uint32_t(appendMeshlets(result, vertices, lodIndices)) : 0;
+			for (size_t i = 0; i < pidx.size(); i += 3)
+				if (pidx[i] != i / 3 && pidx[i] != pidx[i + 1])
+				{
+					printf("ERROR in provoke ib at %d: %d %d %d\n", int(i / 3), pidx[i], pidx[i + 1], pidx[i + 2]);
+					break;
+				}
+
+#if 1
+			result.indices.insert(result.indices.end(), pidx.begin(), pidx.end());
+			result.provokedata.insert(result.provokedata.end(), prov.begin(), prov.end());
+#else
+			for (size_t i = 0; i < pidx.size(); ++i)
+				result.indices.push_back(pidx[i] | (prov[pidx[i]] << 16));
+#endif
+
+			std::vector<uint32_t> lodIndicesU = lodIndices;
+			std::sort(lodIndicesU.begin(), lodIndicesU.end());
+			lodIndicesU.erase(std::unique(lodIndicesU.begin(), lodIndicesU.end()), lodIndicesU.end());
+
+			size_t minprov = std::max(lodIndices.size() / 3, lodIndicesU.size());
+			if (prov.size() < minprov)
+				printf("ERROR in provoke data: %d < %d\n", int(prov.size()), int(minprov));
+
+			printf("provoke: %d triangles => %d vertices (%.1f%% extra), %d degen triangles (%.1f%% extra)\n",
+					int(lodIndices.size() / 3),
+					int(prov.size()),
+					double(prov.size() - minprov) / double(minprov) * 100.0,
+					degen,
+					double(degen) / double(lodIndices.size() / 3) * 100.0);
+
+			lod.indexCount = uint32_t(pidx.size());
+			lod.meshletOffset = result.provokedata.size() - prov.size();
+			lod.meshletCount = 0;
+		}
+		else
+		{
+			result.indices.insert(result.indices.end(), lodIndices.begin(), lodIndices.end());
+
+			lod.meshletOffset = uint32_t(result.meshlets.size());
+			lod.meshletCount = buildMeshlets ? uint32_t(appendMeshlets(result, vertices, lodIndices)) : 0;
+		}
+
 
 		if (mesh.lodCount < COUNTOF(mesh.lods))
 		{
@@ -472,7 +574,7 @@ int main(int argc, const char** argv)
 	for (auto& ext : extensions)
 	{
 		pushDescriptorsSupported = pushDescriptorsSupported || strcmp(ext.extensionName, VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME) == 0;
-		meshShadingSupported = meshShadingSupported || strcmp(ext.extensionName, VK_EXT_MESH_SHADER_EXTENSION_NAME) == 0;
+		// meshShadingSupported = meshShadingSupported || strcmp(ext.extensionName, VK_EXT_MESH_SHADER_EXTENSION_NAME) == 0;
 		profilingSupported = profilingSupported || strcmp(ext.extensionName, VK_KHR_PERFORMANCE_QUERY_EXTENSION_NAME) == 0;
 	}
 
@@ -664,6 +766,9 @@ int main(int argc, const char** argv)
 	Buffer ib = {};
 	createBuffer(ib, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
+	Buffer pb = {};
+	createBuffer(pb, device, memoryProperties, 128 * 1024 * 1024, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
 	Buffer mlb = {};
 	Buffer mdb = {};
 	if (meshShadingSupported)
@@ -676,6 +781,9 @@ int main(int argc, const char** argv)
 
 	uploadBuffer(device, commandPool, commandBuffer, queue, vb, scratch, geometry.vertices.data(), geometry.vertices.size() * sizeof(Vertex));
 	uploadBuffer(device, commandPool, commandBuffer, queue, ib, scratch, geometry.indices.data(), geometry.indices.size() * sizeof(uint32_t));
+
+	if (geometry.provokedata.size())
+		uploadBuffer(device, commandPool, commandBuffer, queue, pb, scratch, geometry.provokedata.data(), geometry.provokedata.size() * sizeof(uint32_t));
 
 	if (meshShadingSupported)
 	{
@@ -1064,7 +1172,7 @@ int main(int argc, const char** argv)
 			{
 				vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPipeline);
 
-				DescriptorInfo descriptors[] = { dcb.buffer, db.buffer, vb.buffer };
+				DescriptorInfo descriptors[] = { dcb.buffer, db.buffer, vb.buffer, pb.buffer };
 				// vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, meshProgram.updateTemplate, meshProgram.layout, 0, descriptors);
 				pushDescriptors(meshProgram, descriptors);
 
@@ -1314,6 +1422,7 @@ int main(int argc, const char** argv)
 		destroyBuffer(mvb, device);
 	}
 
+	destroyBuffer(pb, device);
 	destroyBuffer(ib, device);
 	destroyBuffer(vb, device);
 

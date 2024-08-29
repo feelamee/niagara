@@ -137,6 +137,7 @@ void main()
 			uint dci = atomicAdd(commandCount, 1);
 
 			drawCommands[dci].drawId = di;
+			drawCommands[dci].provokeOffset = lod.meshletOffset; // provoke alias
 			drawCommands[dci].indexCount = lod.indexCount;
 			drawCommands[dci].instanceCount = 1;
 			drawCommands[dci].firstIndex = lod.indexOffset;
