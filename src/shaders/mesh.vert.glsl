@@ -1,4 +1,4 @@
-#version 450
+#version 460
 
 #extension GL_EXT_shader_16bit_storage: require
 #extension GL_EXT_shader_8bit_storage: require
@@ -38,7 +38,7 @@ layout(location = 4) out vec3 out_wpos;
 
 void main()
 {
-	uint drawId = drawCommands[gl_DrawIDARB].drawId;
+	uint drawId = drawCommands[gl_BaseInstance].drawId;
 	MeshDraw meshDraw = draws[drawId];
 
 	uint vi = gl_VertexIndex;

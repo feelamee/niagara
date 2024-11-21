@@ -50,6 +50,18 @@ layout(binding = 4) buffer DrawVisibility
 
 layout(binding = 5) uniform sampler2D depthPyramid;
 
+void emptyDraw()
+{
+	uint di = gl_GlobalInvocationID.x;
+
+	drawCommands[di].drawId = 0;
+	drawCommands[di].indexCount = 0;
+	drawCommands[di].instanceCount = 0;
+	drawCommands[di].firstIndex = 0;
+	drawCommands[di].vertexOffset = 0;
+	drawCommands[di].firstInstance = 0;
+}
+
 void main()
 {
 	uint di = gl_GlobalInvocationID.x;
@@ -60,11 +72,17 @@ void main()
 	MeshDraw drawData = draws[di];
 
 	if (drawData.postPass != cullData.postPass)
+	{
+		emptyDraw();
 		return;
+	}
 
 	// TODO: when occlusion culling is off, can we make sure everything is processed with LATE=false?
 	if (!LATE && drawVisibility[di] == 0)
+	{
+		emptyDraw();
 		return;
+	}
 
 	uint meshIndex = drawData.meshIndex;
 	Mesh mesh = meshes[meshIndex];
@@ -145,16 +163,19 @@ void main()
 		}
 		else
 		{
-			uint dci = atomicAdd(commandCount, 1);
+			// uint dci = atomicAdd(commandCount, 1);
+			uint dci = di;
 
 			drawCommands[dci].drawId = di;
 			drawCommands[dci].indexCount = lod.indexCount;
 			drawCommands[dci].instanceCount = 1;
 			drawCommands[dci].firstIndex = lod.indexOffset;
 			drawCommands[dci].vertexOffset = mesh.vertexOffset;
-			drawCommands[dci].firstInstance = 0;
+			drawCommands[dci].firstInstance = di;
 		}
 	}
+	else
+		emptyDraw();
 
 	if (LATE)
 		drawVisibility[di] = visible ? 1 : 0;

@@ -26,7 +26,7 @@
 bool meshShadingEnabled = true;
 bool cullingEnabled = true;
 bool lodEnabled = true;
-bool occlusionEnabled = true;
+bool occlusionEnabled = false;
 bool clusterOcclusionEnabled = true;
 bool taskShadingEnabled = false; // disabled to have good performance on AMD HW
 bool shadowsEnabled = true;
@@ -1189,6 +1189,10 @@ int main(int argc, const char** argv)
 
 	volkLoadDevice(device);
 
+	vkCmdBeginRendering = vkCmdBeginRenderingKHR;
+	vkCmdEndRendering = vkCmdEndRenderingKHR;
+	vkCmdPipelineBarrier2 = vkCmdPipelineBarrier2KHR;
+
 	GLFWwindow* window = glfwCreateWindow(1024, 768, "niagara", 0, 0);
 	assert(window);
 
@@ -1222,7 +1226,8 @@ int main(int argc, const char** argv)
 	VkSampler readSampler = createSampler(device, VK_FILTER_NEAREST, VK_SAMPLER_MIPMAP_MODE_NEAREST, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE);
 	assert(readSampler);
 
-	VkSampler depthSampler = createSampler(device, VK_FILTER_LINEAR, VK_SAMPLER_MIPMAP_MODE_NEAREST, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, VK_SAMPLER_REDUCTION_MODE_MIN);
+	VkSampler depthSampler = createSampler(device, VK_FILTER_LINEAR, VK_SAMPLER_MIPMAP_MODE_NEAREST, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE);
+	// , VK_SAMPLER_REDUCTION_MODE_MIN);
 	assert(depthSampler);
 
 	VkPipelineRenderingCreateInfo renderingInfo = { VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO };
@@ -1337,8 +1342,8 @@ int main(int argc, const char** argv)
 	VkQueryPool queryPoolTimestamp = createQueryPool(device, 128, VK_QUERY_TYPE_TIMESTAMP);
 	assert(queryPoolTimestamp);
 
-	VkQueryPool queryPoolPipeline = createQueryPool(device, 4, VK_QUERY_TYPE_PIPELINE_STATISTICS);
-	assert(queryPoolPipeline);
+	// VkQueryPool queryPoolPipeline = createQueryPool(device, 4, VK_QUERY_TYPE_PIPELINE_STATISTICS);
+	// assert(queryPoolPipeline);
 
 	VkCommandPool commandPool = createCommandPool(device, familyIndex);
 	assert(commandPool);
@@ -1818,7 +1823,7 @@ int main(int argc, const char** argv)
 		{
 			vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 0);
 
-			vkCmdBeginQuery(commandBuffer, queryPoolPipeline, query, 0);
+			// vkCmdBeginQuery(commandBuffer, queryPoolPipeline, query, 0);
 
 			if (clusterSubmit)
 			{
@@ -1947,12 +1952,13 @@ int main(int argc, const char** argv)
 				vkCmdBindIndexBuffer(commandBuffer, ib.buffer, 0, VK_INDEX_TYPE_UINT32);
 
 				vkCmdPushConstants(commandBuffer, meshProgram.layout, meshProgram.pushConstantStages, 0, sizeof(globals), &passGlobals);
-				vkCmdDrawIndexedIndirectCount(commandBuffer, dcb.buffer, offsetof(MeshDrawCommand, indirect), dccb.buffer, 0, uint32_t(draws.size()), sizeof(MeshDrawCommand));
+				// vkCmdDrawIndexedIndirectCount(commandBuffer, dcb.buffer, offsetof(MeshDrawCommand, indirect), dccb.buffer, 0, uint32_t(draws.size()), sizeof(MeshDrawCommand));
+				vkCmdDrawIndexedIndirect(commandBuffer, dcb.buffer, offsetof(MeshDrawCommand, indirect), uint32_t(draws.size()), sizeof(MeshDrawCommand));
 			}
 
 			vkCmdEndRendering(commandBuffer);
 
-			vkCmdEndQuery(commandBuffer, queryPoolPipeline, query);
+			// // vkCmdEndQuery(commandBuffer, queryPoolPipeline, query);
 
 			vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 1);
 		};
@@ -2022,7 +2028,7 @@ int main(int argc, const char** argv)
 
 		pipelineBarrier(commandBuffer, VK_DEPENDENCY_BY_REGION_BIT, 0, nullptr, COUNTOF(renderBeginBarriers), renderBeginBarriers);
 
-		vkCmdResetQueryPool(commandBuffer, queryPoolPipeline, 0, 4);
+		// vkCmdResetQueryPool(commandBuffer, queryPoolPipeline, 0, 4);
 
 		VkClearColorValue colorClear = { 48.f / 255.f, 10.f / 255.f, 36.f / 255.f, 1 };
 		VkClearDepthStencilValue depthClear = { 0.f, 0 };
@@ -2109,7 +2115,7 @@ int main(int argc, const char** argv)
 		VK_CHECK(vkGetQueryPoolResults(device, queryPoolTimestamp, 0, COUNTOF(timestampResults), sizeof(timestampResults), timestampResults, sizeof(timestampResults[0]), VK_QUERY_RESULT_64_BIT));
 
 		uint64_t pipelineResults[3] = {};
-		VK_CHECK(vkGetQueryPoolResults(device, queryPoolPipeline, 0, COUNTOF(pipelineResults), sizeof(pipelineResults), pipelineResults, sizeof(pipelineResults[0]), VK_QUERY_RESULT_64_BIT));
+		// VK_CHECK(vkGetQueryPoolResults(device, queryPoolPipeline, 0, COUNTOF(pipelineResults), sizeof(pipelineResults), pipelineResults, sizeof(pipelineResults[0]), VK_QUERY_RESULT_64_BIT));
 
 		uint64_t triangleCount = pipelineResults[0] + pipelineResults[1] + pipelineResults[2];
 
@@ -2138,7 +2144,8 @@ int main(int argc, const char** argv)
 		    taskSubmit ? "ON" : "OFF", taskSubmit && taskShadingEnabled ? "ON" : "OFF",
 		    cullingEnabled ? "ON" : "OFF", occlusionEnabled ? "ON" : "OFF", lodEnabled ? "ON" : "OFF", clusterOcclusionEnabled ? "ON" : "OFF");
 
-		glfwSetWindowTitle(window, title);
+		if (frameIndex % 10 == 0)
+			glfwSetWindowTitle(window, title);
 
 		frameIndex++;
 	}
@@ -2200,7 +2207,7 @@ int main(int argc, const char** argv)
 	vkDestroyCommandPool(device, commandPool, 0);
 
 	vkDestroyQueryPool(device, queryPoolTimestamp, 0);
-	vkDestroyQueryPool(device, queryPoolPipeline, 0);
+	// vkDestroyQueryPool(device, queryPoolPipeline, 0);
 
 	destroySwapchain(device, swapchain);
 

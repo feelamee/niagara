@@ -198,7 +198,7 @@ VkPhysicalDevice pickPhysicalDevice(VkPhysicalDevice* physicalDevices, uint32_t 
 		if (!supportsPresentation(physicalDevices[i], familyIndex))
 			continue;
 
-		if (props.apiVersion < VK_API_VERSION_1_3)
+		if (props.apiVersion < VK_API_VERSION_1_2)
 			continue;
 
 		if (ngpu && atoi(ngpu) == i)
@@ -246,6 +246,10 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 	std::vector<const char*> extensions = {
 		VK_KHR_SWAPCHAIN_EXTENSION_NAME,
 		VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME,
+
+		"VK_KHR_portability_subset", // ext still in beta??
+		VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME,
+		VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
 	};
 
 	if (meshShadingSupported)
@@ -260,23 +264,26 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 
 	VkPhysicalDeviceFeatures2 features = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
 	features.features.multiDrawIndirect = true;
-	features.features.pipelineStatisticsQuery = true;
+	// features.features.pipelineStatisticsQuery = true;
 	features.features.shaderInt16 = true;
 	features.features.shaderInt64 = true;
 	features.features.samplerAnisotropy = true;
+	features.features.shaderStorageImageWriteWithoutFormat = true;
 
 	VkPhysicalDeviceVulkan11Features features11 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES };
 	features11.storageBuffer16BitAccess = true;
 	features11.shaderDrawParameters = true;
 
 	VkPhysicalDeviceVulkan12Features features12 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES };
-	features12.drawIndirectCount = true;
+	// features12.drawIndirectCount = true;
 	features12.storageBuffer8BitAccess = true;
 	features12.uniformAndStorageBuffer8BitAccess = true;
 	features12.shaderFloat16 = true;
 	features12.shaderInt8 = true;
-	features12.samplerFilterMinmax = true;
+	// features12.samplerFilterMinmax = true;
 	features12.scalarBlockLayout = true;
+
+	// also feature errors are garbage, wtf is "31st flag in FooFeatures"
 
 	if (raytracingSupported)
 		features12.bufferDeviceAddress = true;
@@ -307,6 +314,12 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 	VkPhysicalDeviceAccelerationStructureFeaturesKHR featuresAccelerationStructure = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR };
 	featuresAccelerationStructure.accelerationStructure = true;
 
+	VkPhysicalDeviceDynamicRenderingFeatures featuresDynamicRendering = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES };
+	featuresDynamicRendering.dynamicRendering = true;
+
+	VkPhysicalDeviceSynchronization2Features featuresSynchronization2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES };
+	featuresSynchronization2.synchronization2 = true;
+
 	VkDeviceCreateInfo createInfo = { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
 	createInfo.queueCreateInfoCount = 1;
 	createInfo.pQueueCreateInfos = &queueInfo;
@@ -317,9 +330,10 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 	createInfo.pNext = &features;
 	features.pNext = &features11;
 	features11.pNext = &features12;
-	features12.pNext = &features13;
+	features12.pNext = &featuresDynamicRendering;
+	featuresDynamicRendering.pNext = &featuresSynchronization2;
 
-	void** ppNext = &features13.pNext;
+	void** ppNext = &featuresSynchronization2.pNext;
 
 	if (meshShadingSupported)
 	{
